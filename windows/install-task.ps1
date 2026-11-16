@@ -4,8 +4,11 @@ param([Parameter(Mandatory=$true)][string]$Mcp, [string]$Name = 'Lyra', [string]
 $start = Join-Path $PSScriptRoot 'start.ps1'
 $arg = "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$start`" -Mcp `"$Mcp`" -Name `"$Name`" -Model `"$Model`" -Topic `"$Topic`" -Operator `"$Operator`" -Trusted `"$Trusted`""
 $action  = New-ScheduledTaskAction -Execute 'powershell.exe' -Argument $arg
-$trigger = New-ScheduledTaskTrigger -AtLogOn -User "$env:USERDOMAIN\$env:USERNAME"
+$user    = (& whoami)                                 # machine\user; USERDOMAIN reads WORKGROUP in an ssh session
+$trigger = New-ScheduledTaskTrigger -AtLogOn -User $user
 $trigger.Delay = 'PT90S'                                   # let the network and Ollama come up first
 $set = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable
-Register-ScheduledTask -TaskName "axona-model-host-$Name" -Action $action -Trigger $trigger -Settings $set -Force | Out-Null
-"registered task axona-model-host-$Name (at logon of $env:USERNAME, 90 s delay)"
+$principal = New-ScheduledTaskPrincipal -UserId $user -LogonType Interactive -RunLevel Limited
+Register-ScheduledTask -TaskName "axona-model-host-$Name" -Action $action -Trigger $trigger -Settings $set -Principal $principal -Force -ErrorAction Stop | Out-Null
+$t = Get-ScheduledTask -TaskName "axona-model-host-$Name" -ErrorAction SilentlyContinue
+if ($t) { "registered task axona-model-host-$Name (at logon of $user, 90 s delay), state $($t.State)" } else { "TASK NOT REGISTERED"; exit 1 }
