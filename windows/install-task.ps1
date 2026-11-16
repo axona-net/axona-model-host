@@ -1,8 +1,8 @@
 # install-task.ps1 — register a scheduled task that runs start.ps1 when THIS user logs on.
 # It does not run before a logon: a reboot with nobody logged on leaves the host down.
-param([Parameter(Mandatory=$true)][string]$Mcp, [string]$Name = 'Lyra', [string]$Model = 'qwen3:8b', [string]$Topic = 'council', [string]$Operator = '')
+param([Parameter(Mandatory=$true)][string]$Mcp, [string]$Name = 'Lyra', [string]$Model = 'qwen3:8b', [string]$Topic = 'council', [string]$Operator = '', [string]$Trusted = '')
 $start = Join-Path $PSScriptRoot 'start.ps1'
-$arg = "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$start`" -Mcp `"$Mcp`" -Name `"$Name`" -Model `"$Model`" -Topic `"$Topic`" -Operator `"$Operator`""
+$arg = "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$start`" -Mcp `"$Mcp`" -Name `"$Name`" -Model `"$Model`" -Topic `"$Topic`" -Operator `"$Operator`" -Trusted `"$Trusted`""
 $action  = New-ScheduledTaskAction -Execute 'powershell.exe' -Argument $arg
 $trigger = New-ScheduledTaskTrigger -AtLogOn -User "$env:USERDOMAIN\$env:USERNAME"
 $trigger.Delay = 'PT90S'                                   # let the network and Ollama come up first
