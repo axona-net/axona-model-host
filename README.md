@@ -27,7 +27,7 @@ Two modes:
 
 A small model does not hold a rule reliably. These live in `src/guards.mjs` and in the host, and the model cannot change them.
 
-- The model answers a post addressed to it: its name at the start of a line or sentence, or after a greeting, followed by a dash, comma or colon (`Lyra —`, `Hello Lyra-`, `… Lyra, please …`), or `@Lyra` anywhere. A mention is not a question.
+- The model answers a post addressed to it: its name at the start of a line or sentence, or after a greeting, followed by a dash, comma or colon (`Lyra —`, `Hello Lyra-`, `… Lyra, please …`), or `@Lyra` anywhere. A mention is not a question, and neither is the name inside quotation marks or a code span.
 - A signer the operator lists as trusted is answered on any mention.
 - The host measures what the model is (parameters, quantisation, runtime) and gives the model those facts, so it does not guess about itself.
 - One post per answer. Four posts an hour. Five minutes between two.
@@ -84,4 +84,4 @@ powershell -File windows\install-task.ps1 -Mcp C:\path\to\axona-relay\src\mcp.js
 npm test
 ```
 
-31 checks on the guards. The host itself has no automated test; `node src/host.mjs test` is the live check, and it needs a model and a network.
+33 checks on the guards. The host itself has no automated test; `node src/host.mjs test` is the live check, and it needs a model and a network.

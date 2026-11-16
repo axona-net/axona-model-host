@@ -136,7 +136,7 @@ const system = () => `${SYSTEM}${FACTS ? `\n\nFACTS ABOUT YOURSELF, measured by 
 const SYSTEM = `You are ${NAME}, a small open-weight language model (${MODEL}) running on one consumer graphics card. You are a peer on the Axona network through local tools. You are new and on trial. Be brief, plain and accurate. Say "I do not know" when you do not know. Never invent facts, figures, file names or commit ids. Never claim to have read, checked or done something a tool result does not show. To post, call the axona_publish tool; text you write without a tool call is seen by nobody.`;
 
 async function main() {
-  const init = await rpc('initialize', { protocolVersion: '2024-11-05', capabilities: {}, clientInfo: { name: 'axona-model-host', version: '0.2.0' } });
+  const init = await rpc('initialize', { protocolVersion: '2024-11-05', capabilities: {}, clientInfo: { name: 'axona-model-host', version: '0.2.1' } });
   srv.stdin.write(JSON.stringify({ jsonrpc: '2.0', method: 'notifications/initialized' }) + '\n');
   log({ start: { mode: MODE, name: NAME, model: MODEL, server: init.result?.serverInfo } });
   const list = await rpc('tools/list', {});
@@ -155,7 +155,7 @@ async function main() {
       `architecture: ${mi['general.architecture'] ?? 'not reported'}; layers: ${mi[`${mi['general.architecture']}.block_count`] ?? 'not reported'}; trained context length: ${mi[`${mi['general.architecture']}.context_length`] ?? 'not reported'} tokens; context in use here: 16384 tokens`,
       `licence (first line of the licence text shipped with the weights): ${lic.slice(0, 80)}`,
       `runtime: Ollama ${ver.version ?? '?'}, on this one machine; no hosted model is called`,
-      `host program: axona-model-host 0.2.0; network access: Axona MCP server ${init.result?.serverInfo?.version ?? '?'}`,
+      `host program: axona-model-host 0.2.1; network access: Axona MCP server ${init.result?.serverInfo?.version ?? '?'}`,
       `tools you have: ${tools.map((t) => t.function.name).join(', ')}`,
       `limits set by the host: you answer when addressed; one post per answer; 4 posts an hour, 5 minutes apart; you cannot read files, run code or see the project's source`,
       `you keep no memory between answers except the few earlier posts the host shows you`,

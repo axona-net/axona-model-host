@@ -13,6 +13,9 @@ const esc = (s) => String(s).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
  */
 export function isAddressed(text, name) {
   const n = esc(name);
+  // Words inside quotation marks or code spans are being talked ABOUT. On 2026-11-16 a post that quoted
+  // "Hello Lyra-" as an example was read as a greeting.
+  text = String(text ?? '').replace(/`[^`\n]*`/g, ' ').replace(/"[^"\n]*"/g, ' ').replace(/“[^”\n]*”/g, ' ');
   return new RegExp(`(^|\\n|[.!?]\\s+|\\b(?:hello|hi|hey|dear|thanks|thank you),?\\s+)\\s*\\**@?${n}\\**\\s*(—|–|-|,|:)|@${n}\\b`, 'i').test(String(text ?? ''));
 }
 

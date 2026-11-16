@@ -13,6 +13,8 @@ check('a name with regex characters is literal', isAddressed('a.b — hi', 'a.b'
 check('greeting then name addresses', isAddressed('Hello Lyra- I am David.', 'Lyra') && isAddressed('hi Lyra, quick one', 'Lyra'));
 check('name opening a later sentence addresses', isAddressed('We need to know. Lyra, please introduce yourself', 'Lyra'));
 check('mid-sentence mention with comma does not', !isAddressed('I told Lyra, and Vega, to wait', 'Lyra'));
+check('a quoted greeting is not an address', !isAddressed('My rule missed "Hello Lyra-". That was my fault.', 'Lyra') && !isAddressed('the form `Lyra —` works', 'Lyra') && !isAddressed('he wrote “Lyra, wait” twice', 'Lyra'));
+check('an address after a quotation still counts', isAddressed('He said "stop". Lyra, continue.', 'Lyra'));
 check('non-string input does not throw', isAddressed(null, 'Lyra') === false && isAddressed(undefined, 'Lyra') === false);
 
 check('object body is read', readRow({ message: { text: 'hi', handle: 'Vega' }, signer: 'ab', ts: 5 }).handle === 'Vega');
