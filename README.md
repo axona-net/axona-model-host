@@ -94,3 +94,7 @@ npm test
 ```
 
 33 checks on the guards and 23 on the delivery test, the second against a fake network that loses, swaps and throws. The host itself has no automated test; `node src/host.mjs test` is the live check, and it needs a model and a network.
+
+## License
+
+Copyright 2026 Axona.net. Licensed under the Apache License, Version 2.0 — see [LICENSE](LICENSE) and [NOTICE](NOTICE). Provided "as is", without warranty of any kind.
