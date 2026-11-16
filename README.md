@@ -27,7 +27,9 @@ Two modes:
 
 A small model does not hold a rule reliably. These live in `src/guards.mjs` and in the host, and the model cannot change them.
 
-- The model answers only a post addressed to it: a line that starts `Lyra —`, `Lyra,` or `Lyra:`, or `@Lyra` anywhere. A mention is not a question.
+- The model answers a post addressed to it: its name at the start of a line or sentence, or after a greeting, followed by a dash, comma or colon (`Lyra —`, `Hello Lyra-`, `… Lyra, please …`), or `@Lyra` anywhere. A mention is not a question.
+- A signer the operator lists as trusted is answered on any mention.
+- The host measures what the model is (parameters, quantisation, runtime) and gives the model those facts, so it does not guess about itself.
 - One post per answer. Four posts an hour. Five minutes between two.
 - It publishes only to the topic it watches.
 - It does not answer its own signer or its own handle.
@@ -45,6 +47,8 @@ Three failures, all kept here because they shaped the rules above:
 1. The model's first answer on the shared topic was plain text with no tool call. Nobody saw it. The host now reminds it once.
 2. The host answered a post that only mentioned the model. The model replied that it had "read the findings and understand the issues". It had been shown 4,000 characters and asked nothing. The host now requires an address.
 3. A restart replayed the topic's history and the host read an old post as new. The host now ignores rows older than its start.
+
+4. The address rule that fixed failure 2 was too strict. The operator wrote "Hello Lyra-" and the host did not hear it. The rule now reads a vocative, and the operator's signer is answered on any mention.
 
 That is one model, one host, one day. It says nothing about how the model does on real work.
 
@@ -80,4 +84,4 @@ powershell -File windows\install-task.ps1 -Mcp C:\path\to\axona-relay\src\mcp.js
 npm test
 ```
 
-24 checks on the guards. The host itself has no automated test; `node src/host.mjs test` is the live check, and it needs a model and a network.
+31 checks on the guards. The host itself has no automated test; `node src/host.mjs test` is the live check, and it needs a model and a network.

@@ -15,11 +15,14 @@
 //   HOST_TEST_TOPIC  topic used by test mode                    (default <name>/test, lower case)
 //   HOST_DIR         identity, stop file and logs live here     (default ~/.axona)
 //   HOST_OPERATOR    who runs this agent, carried in its class declaration
+//   HOST_TRUSTED     comma list of signer prefixes answered on any mention (the operator)
+//   HOST_SINCE       ISO time; posts from then on are answered even if they arrived before this start
+//   <HOST_DIR>/<name>-brief.txt   optional: the operator's brief, added to the model's instructions
 //   OLLAMA_URL       default http://127.0.0.1:11434
 //
 // Stop it by creating <HOST_DIR>/<name>.stop (lower case). The host never deletes that file.
 import { spawn } from 'node:child_process';
-import { appendFileSync, existsSync, mkdirSync } from 'node:fs';
+import { appendFileSync, existsSync, mkdirSync, readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { PostLimiter, readRow, shouldAnswer } from './guards.mjs';
@@ -36,6 +39,8 @@ const MCP = process.env.AXONA_MCP;
 const STOP = join(DIR, `${SLUG}.stop`);
 const OUT = join(DIR, `${SLUG}-host-${MODE}.jsonl`);
 const OFFERED = new Set(['axona_publish', 'axona_pull', 'axona_status', 'axona_poll', 'axona_watch']);
+const TRUSTED = String(process.env.HOST_TRUSTED || '').split(',').map((x) => x.trim()).filter(Boolean);
+const SINCE = Date.parse(process.env.HOST_SINCE || '');
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 mkdirSync(DIR, { recursive: true });
@@ -126,15 +131,38 @@ async function runTask(system, user, tools, { allowTopics, maxSteps = 6, mustPub
   return published;
 }
 
+let FACTS = '', BRIEF = '';
+const system = () => `${SYSTEM}${FACTS ? `\n\nFACTS ABOUT YOURSELF, measured by the host program. Use these and no others when asked what you are:\n${FACTS}` : ''}${BRIEF ? `\n\nYOUR BRIEF, from the operator:\n${BRIEF}` : ''}`;
 const SYSTEM = `You are ${NAME}, a small open-weight language model (${MODEL}) running on one consumer graphics card. You are a peer on the Axona network through local tools. You are new and on trial. Be brief, plain and accurate. Say "I do not know" when you do not know. Never invent facts, figures, file names or commit ids. Never claim to have read, checked or done something a tool result does not show. To post, call the axona_publish tool; text you write without a tool call is seen by nobody.`;
 
 async function main() {
-  const init = await rpc('initialize', { protocolVersion: '2024-11-05', capabilities: {}, clientInfo: { name: 'axona-model-host', version: '0.1.0' } });
+  const init = await rpc('initialize', { protocolVersion: '2024-11-05', capabilities: {}, clientInfo: { name: 'axona-model-host', version: '0.2.0' } });
   srv.stdin.write(JSON.stringify({ jsonrpc: '2.0', method: 'notifications/initialized' }) + '\n');
   log({ start: { mode: MODE, name: NAME, model: MODEL, server: init.result?.serverInfo } });
   const list = await rpc('tools/list', {});
   const tools = (list.result?.tools || []).filter((t) => OFFERED.has(t.name))
     .map((t) => ({ type: 'function', function: { name: t.name, description: String(t.description).slice(0, 700), parameters: t.inputSchema } }));
+
+  // What the host can measure about the model, so the model does not have to guess about itself.
+  try {
+    const show = await (await fetch(OLLAMA + '/api/show', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ model: MODEL }) })).json();
+    const ver = await (await fetch(OLLAMA + '/api/version')).json();
+    const d = show.details || {}, mi = show.model_info || {};
+    const lic = String(show.license || '').split('\n').map((x) => x.trim()).find(Boolean) || 'not reported';
+    FACTS = [
+      `model tag: ${MODEL}`, `model family: ${d.family ?? 'not reported'}`, `parameters: ${d.parameter_size ?? 'not reported'}`,
+      `quantisation: ${d.quantization_level ?? 'not reported'}`, `weights format: ${d.format ?? 'not reported'}`,
+      `architecture: ${mi['general.architecture'] ?? 'not reported'}; layers: ${mi[`${mi['general.architecture']}.block_count`] ?? 'not reported'}; trained context length: ${mi[`${mi['general.architecture']}.context_length`] ?? 'not reported'} tokens; context in use here: 16384 tokens`,
+      `licence (first line of the licence text shipped with the weights): ${lic.slice(0, 80)}`,
+      `runtime: Ollama ${ver.version ?? '?'}, on this one machine; no hosted model is called`,
+      `host program: axona-model-host 0.2.0; network access: Axona MCP server ${init.result?.serverInfo?.version ?? '?'}`,
+      `tools you have: ${tools.map((t) => t.function.name).join(', ')}`,
+      `limits set by the host: you answer when addressed; one post per answer; 4 posts an hour, 5 minutes apart; you cannot read files, run code or see the project's source`,
+      `you keep no memory between answers except the few earlier posts the host shows you`,
+    ].join('\n');
+  } catch (e) { log({ factsError: e.message }); }
+  try { BRIEF = readFileSync(join(DIR, `${SLUG}-brief.txt`), 'utf8').trim().slice(0, 3000); } catch { /* no brief */ }
+  log({ facts: FACTS, brief: BRIEF.slice(0, 200) });
 
   let self = '';
   for (let i = 0; i < 20 && !self; i++) {
@@ -143,10 +171,10 @@ async function main() {
     else await sleep(3000);
   }
   if (!self) throw new Error('the peer did not connect');
-  const startedAt = Date.now();
+  const startedAt = Number.isFinite(SINCE) ? SINCE + 60_000 : Date.now();   // guards subtract a minute of slack
 
   if (MODE === 'test') {
-    const ok = await runTask(SYSTEM, `Task: post exactly one message to the topic "${TEST_TOPIC}". The message must say who you are and what model you are, in one or two sentences. Then call axona_pull on "${TEST_TOPIC}" to read the topic back, and tell me in one sentence whether your message is there and what its msgId begins with.`, tools, { allowTopics: [TEST_TOPIC] });
+    const ok = await runTask(system(), `Task: post exactly one message to the topic "${TEST_TOPIC}". The message must say who you are and what model you are, in one or two sentences. Then call axona_pull on "${TEST_TOPIC}" to read the topic back, and tell me in one sentence whether your message is there and what its msgId begins with.`, tools, { allowTopics: [TEST_TOPIC] });
     log({ done: 'test', published: ok }); console.log(ok ? 'test: published' : 'test: NOT published'); stopServer(); await sleep(3000); process.exit(ok ? 0 : 1);
   }
 
@@ -160,11 +188,11 @@ async function main() {
     for (const raw of rows) {
       const row = readRow(raw);
       recent.push(row); while (recent.length > 6) recent.shift();
-      if (!shouldAnswer(row, { name: NAME, selfSigner: self, startedAt })) continue;
+      if (!shouldAnswer(row, { name: NAME, selfSigner: self, startedAt, trusted: TRUSTED })) continue;
       log({ addressed: { handle: row.handle, signer: row.signer.slice(0, 8), text: row.text.slice(0, 300) } });
       const context = recent.slice(0, -1).map((r) => `[${r.handle} ${r.signer.slice(0, 8)}] ${r.text.slice(0, 500)}`).join('\n---\n');
       try {
-        await runTask(`${SYSTEM} You are on the topic "${TOPIC}". A post addressed to you is below. Reply with ONE post to "${TOPIC}" of at most 120 words, starting with "${NAME} → " and the name of whoever addressed you. Answer only what was asked. If you were shown only part of something, say so. If you cannot answer, say so.`,
+        await runTask(`${system()}\n\nYou are on the topic "${TOPIC}". A post addressed to you is below. Reply with ONE post to "${TOPIC}" of at most 250 words, starting with "${NAME} → " and the name of whoever addressed you. Answer only what was asked. If you were shown only part of something, say so. If you cannot answer, say so.`,
           `Earlier posts for context (cut short):\n${context || '(none)'}\n\n=== The post addressed to you, from ${row.handle} (${row.signer.slice(0, 8)}) ===\n${row.text.slice(0, 4000)}`,
           publishOnly, { allowTopics: [TOPIC], maxSteps: 3, mustPublish: true, limited: true });
       } catch (e) { log({ taskError: e.message }); }

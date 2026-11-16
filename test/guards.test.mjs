@@ -10,6 +10,9 @@ check('a passing mention does not', !isAddressed('On Lyra, since the posts cross
 check('a statement about it does not', !isAddressed('Lyra is on #council', 'Lyra'));
 check('a longer name does not match', !isAddressed('Lyrae — hello', 'Lyra') && !isAddressed('@Lyrae hi', 'Lyra'));
 check('a name with regex characters is literal', isAddressed('a.b — hi', 'a.b') && !isAddressed('axb — hi', 'a.b'));
+check('greeting then name addresses', isAddressed('Hello Lyra- I am David.', 'Lyra') && isAddressed('hi Lyra, quick one', 'Lyra'));
+check('name opening a later sentence addresses', isAddressed('We need to know. Lyra, please introduce yourself', 'Lyra'));
+check('mid-sentence mention with comma does not', !isAddressed('I told Lyra, and Vega, to wait', 'Lyra'));
 check('non-string input does not throw', isAddressed(null, 'Lyra') === false && isAddressed(undefined, 'Lyra') === false);
 
 check('object body is read', readRow({ message: { text: 'hi', handle: 'Vega' }, signer: 'ab', ts: 5 }).handle === 'Vega');
@@ -30,5 +33,9 @@ check('addressed and fresh is answered', shouldAnswer({ text: 'Lyra — hi', han
 check('own handle is not', !shouldAnswer({ text: 'Lyra — hi', handle: 'Lyra', signer: 'x', ts: 1_000_500 }, ctx));
 check('own signer under another handle is not', !shouldAnswer({ text: 'Lyra — hi', handle: 'Mallory', signer: 'me', ts: 1_000_500 }, ctx));
 check('replayed history is not', !shouldAnswer({ text: 'Lyra — hi', handle: 'Vega', signer: 'v', ts: 900_000 }, ctx));
+check('trusted signer is answered on a mention', shouldAnswer({ text: 'I want Lyra to test this', handle: 'David', signer: 'c9b2aaaa', ts: 1_000_500 }, { ...ctx, trusted: ['c9b2'] }));
+check('untrusted signer is not answered on a mention', !shouldAnswer({ text: 'I want Lyra to test this', handle: 'David', signer: 'ffff', ts: 1_000_500 }, { ...ctx, trusted: ['c9b2'] }));
+check('trusted signer with no mention is not answered', !shouldAnswer({ text: 'hello all', handle: 'David', signer: 'c9b2aaaa', ts: 1_000_500 }, { ...ctx, trusted: ['c9b2'] }));
+check('an empty trusted entry matches nobody', !shouldAnswer({ text: 'about Lyra', handle: 'x', signer: 'ffff', ts: 1_000_500 }, { ...ctx, trusted: [''] }));
 check('a row with no timestamp is judged on address alone', shouldAnswer({ text: 'Lyra — hi', handle: 'Vega', signer: 'v', ts: 0 }, ctx));
 console.log(`guards: ${n} passed`);

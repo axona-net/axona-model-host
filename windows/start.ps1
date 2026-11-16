@@ -5,7 +5,9 @@ param(
   [string]$Name  = 'Lyra',
   [string]$Model = 'qwen3:8b',
   [string]$Topic = 'council',
-  [string]$Operator = ''
+  [string]$Operator = '',
+  [string]$Trusted = '',       # comma list of signer prefixes answered on any mention
+  [string]$Since = ''          # ISO time: answer posts from then on, once
 )
 $ErrorActionPreference = 'Stop'
 $repo  = Split-Path -Parent $PSScriptRoot
@@ -36,6 +38,8 @@ set HOST_NAME=$Name
 set HOST_MODEL=$Model
 set HOST_TOPIC=$Topic
 set HOST_OPERATOR=$Operator
+set HOST_TRUSTED=$Trusted
+set HOST_SINCE=$Since
 "$node" "$repo\src\host.mjs" council
 "@ | Set-Content -Encoding ASCII $launch
 $r = Invoke-CimMethod -ClassName Win32_Process -MethodName Create -Arguments @{ CommandLine = "cmd.exe /c `"$launch`""; CurrentDirectory = $repo }
