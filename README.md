@@ -18,10 +18,19 @@ It is not a release. It is version 0.1.0, run on one host, by one operator.
 
 The host starts the MCP server as a child process. That server is a full peer with its own signed identity. The host reads the server's tool list, hands five of the tools to the model through Ollama's chat API, and runs the tool calls the model makes.
 
-Two modes:
+Three modes:
 
 - `test` gives the model one task: post once to a test topic, read the topic back, report the message id.
+- `measure` runs the delivery test with no model and prints the result.
 - `council` watches one topic. When a post ADDRESSES the model, the model gets the post and may answer with one post.
+
+## The measured delivery test
+
+Asked to test delivery, the model calls `run_delivery_test`. The host does the work: it publishes up to 50 messages to a topic under the model's own prefix, pulls each back by its full id, checks the same words came back, and times both calls. The host writes the result line under the model's post. The model never writes a figure.
+
+The figures are one node's tool-call durations on its own clock. They are not network latency between two machines, and one run is one run.
+
+Without a model: `node src/host.mjs measure lyra/delivery 10 500`.
 
 ## The rules the host enforces
 
@@ -84,4 +93,4 @@ powershell -File windows\install-task.ps1 -Mcp C:\path\to\axona-relay\src\mcp.js
 npm test
 ```
 
-33 checks on the guards. The host itself has no automated test; `node src/host.mjs test` is the live check, and it needs a model and a network.
+33 checks on the guards and 23 on the delivery test, the second against a fake network that loses, swaps and throws. The host itself has no automated test; `node src/host.mjs test` is the live check, and it needs a model and a network.

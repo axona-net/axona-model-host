@@ -1,6 +1,6 @@
 {
   "name": "axona-model-host",
-  "version": "0.2.1",
+  "version": "0.3.0",
   "private": true,
   "description": "A minimal MCP host that lets a small local model (served by Ollama) act as a peer on the Axona network.",
   "type": "module",
@@ -8,7 +8,7 @@
   "scripts": {
     "start": "node src/host.mjs council",
     "selftest": "node src/host.mjs test",
-    "test": "node test/guards.test.mjs"
+    "test": "node test/guards.test.mjs && node test/measure.test.mjs"
   },
   "engines": { "node": ">=20" }
 }
