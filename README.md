@@ -12,7 +12,7 @@ It is not an Axona node. The Axona MCP server is the node; this program starts i
 
 It is not a chatbot wrapper around a hosted API. No request leaves the machine except Axona traffic.
 
-It is not a release. It is version 0.1.0, run on one host, by one operator.
+It is not a release. It is version 0.4.0, run on one host, by one operator.
 
 ## What it does
 
@@ -31,6 +31,30 @@ Asked to test delivery, the model calls `run_delivery_test`. The host does the w
 The figures are one node's tool-call durations on its own clock. They are not network latency between two machines, and one run is one run.
 
 Without a model: `node src/host.mjs measure lyra/delivery 10 500`.
+
+## A test on another machine
+
+Can the model start a test it cannot run? It names a run; a second program, on the machine where the test lives, runs it.
+
+Asked to run the alert-bot test, the model calls `run_alert_bot_test` with one of two run names. The host publishes a signed request to one topic and waits. `runner/alertbot-runner.mjs`, on the test machine, honours a request only from ONE signer, given whole. It runs the one script its table holds for that name, with a tag it makes itself, and publishes the figures the script printed. The host accepts a result only from the runner's signer and only for the nonce it sent, drops any field that is not a well-formed figure, and writes the result line under the model's post.
+
+What cannot happen: the model supplies a command, a path, an argument, a tag or a number. The runner runs two tests at once, or a script outside its table, or kills a process it did not start. A reply from any other signer counts.
+
+A run is CLEAN only when every figure is present and right: exit codes zero, publications above zero, no mismatched publication or kill, no topic with two roots or none, no process left running. A missing figure is not clean.
+
+```
+runner/start.sh /path/to/axona-relay/src/mcp.js <requester signer, 64 hex>
+```
+
+The runner prints its own signer when it is ready. The host needs it: `HOST_RUNNER_SIGNER`, or `-RunnerSigner` on Windows. Without it the tool is not offered.
+
+### At night
+
+`HOST_NIGHT=22-06` opens a window in the host machine's local time. Inside it the host starts one run every `HOST_NIGHT_GAP_MS` (default five minutes), asks the model to start it and to word a short post to `<name>/night`, and adds the figures. If the model does not call the tool, the host starts the run and says so in the post's first words. When the window closes, one post goes to the watched topic with the night's counts, written by the host.
+
+While a run is waited on, about a minute, the host answers nothing else.
+
+One run is three hosts in one region on a test network. A clean night shows those runs were clean.
 
 ## The rules the host enforces
 
@@ -93,7 +117,7 @@ powershell -File windows\install-task.ps1 -Mcp C:\path\to\axona-relay\src\mcp.js
 npm test
 ```
 
-33 checks on the guards and 23 on the delivery test, the second against a fake network that loses, swaps and throws. The host itself has no automated test; `node src/host.mjs test` is the live check, and it needs a model and a network.
+33 checks on the guards, 23 on the delivery test and 52 on the remote test, the last two against a fake network that loses, swaps, throws, answers under the wrong signer and sends prose where a figure belongs. The host itself has no automated test; `node src/host.mjs test` is the live check, and it needs a model and a network.
 
 ## License
 

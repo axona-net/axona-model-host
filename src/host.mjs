@@ -20,6 +20,12 @@
 //   HOST_SINCE       ISO time; posts from then on are answered even if they arrived before this start
 //   <HOST_DIR>/<name>-brief.txt   optional: the operator's brief, added to the model's instructions
 //   OLLAMA_URL       default http://127.0.0.1:11434
+//   HOST_RUNNER_SIGNER  full 64-hex signer of the test runner; without it run_alert_bot_test is not offered
+//   HOST_REMOTE_TOPIC   topic the runner watches               (default <name>/alert-bot, lower case)
+//   HOST_NIGHT          local hours "HH-HH" in which the host starts tests by itself, e.g. 22-06 (default: never)
+//   HOST_NIGHT_TOPIC    where each night run is posted         (default <name>/night, lower case)
+//   HOST_NIGHT_GAP_MS   least time between two night run starts (default 300000)
+//   HOST_NIGHT_RUN      which run the night uses               (default production)
 //
 // Stop it by creating <HOST_DIR>/<name>.stop (lower case). The host never deletes that file.
 import { spawn } from 'node:child_process';
@@ -28,6 +34,7 @@ import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { PostLimiter, readRow, shouldAnswer } from './guards.mjs';
 import { planTest, runDeliveryTest, resultLine } from './measure.mjs';
+import { RUNS, planRemote, runRemoteTest, remoteResultLine, inWindow, nightSummaryLine } from './remote.mjs';
 
 const MODE = process.argv[2] || 'council';
 const NAME = process.env.HOST_NAME || 'Lyra';
@@ -44,6 +51,13 @@ const OFFERED = new Set(['axona_publish', 'axona_pull', 'axona_status', 'axona_p
 const TRUSTED = String(process.env.HOST_TRUSTED || '').split(',').map((x) => x.trim()).filter(Boolean);
 const SINCE = Date.parse(process.env.HOST_SINCE || '');
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+const VERSION = '0.4.0';
+const RUNNER = /^[0-9a-f]{64}$/.test(String(process.env.HOST_RUNNER_SIGNER || '').toLowerCase()) ? String(process.env.HOST_RUNNER_SIGNER).toLowerCase() : null;
+const REMOTE_TOPIC = process.env.HOST_REMOTE_TOPIC || `${SLUG}/alert-bot`;
+const NIGHT = RUNNER ? (process.env.HOST_NIGHT || '') : '';
+const NIGHT_TOPIC = process.env.HOST_NIGHT_TOPIC || `${SLUG}/night`;
+const NIGHT_GAP = Number(process.env.HOST_NIGHT_GAP_MS) >= 60_000 ? Number(process.env.HOST_NIGHT_GAP_MS) : 300_000;
+const NIGHT_RUN = Object.prototype.hasOwnProperty.call(RUNS, process.env.HOST_NIGHT_RUN || '') ? process.env.HOST_NIGHT_RUN : 'production';
 
 mkdirSync(DIR, { recursive: true });
 const log = (o) => { try { appendFileSync(OUT, JSON.stringify({ at: new Date().toISOString(), ...o }) + '\n'); } catch { /* a full disk must not stop the host */ } };
@@ -96,10 +110,17 @@ const MEASURE_TOOL = { type: 'function', function: { name: 'run_delivery_test',
   description: `Run a measured delivery test: the host publishes "count" messages to a test topic, pulls each back by id, and times both. Returns the measured result. Use it when you are asked to test delivery, latency or loss. The topic must start with "${SLUG}/". After it returns, publish ONE short post saying what you were asked to test; the host adds the measured figures under your words, so do not write figures yourself.`,
   parameters: { type: 'object', properties: { topic: { type: 'string', description: `Test topic, must start with "${SLUG}/", for example "${SLUG}/delivery"` }, count: { type: 'integer', description: 'How many messages, 1 to 50' }, intervalMs: { type: 'integer', description: 'Pause between messages in ms, 200 to 10000 (default 1000)' } }, required: ['topic', 'count'] } } };
 
+const remoteLimiter = new PostLimiter({ perHour: 6, minGapMs: 60_000 });   // remote tests asked for on the topic, not posts
+// The second tool the HOST provides. The model names a run; a runner on the test machine does it and measures it.
+const REMOTE_TOOL = { type: 'function', function: { name: 'run_alert_bot_test',
+  description: `Start one alert-bot stress test on the test machine and wait for its result (about one to two minutes). Returns the result measured by the test runner. Use it when you are asked to run the alert-bot test or to stress test the network. After it returns, publish ONE short post saying which run you started; the host adds the measured figures under your words, so do not write figures yourself. Runs: ${Object.entries(RUNS).map(([k, v]) => `"${k}" = ${v}`).join('; ')}.`,
+  parameters: { type: 'object', properties: { run: { type: 'string', enum: Object.keys(RUNS), description: 'Which run. Use "production" unless you were asked for another.' } }, required: ['run'] } } };
+const startRemote = (plan) => runRemoteTest(callTool, plan, { topic: REMOTE_TOPIC, runnerSigner: RUNNER });
+
 // One task: the model works with the tools until it stops calling them.
 // The host refuses any tool it did not offer and any topic the task does not allow.
-async function runTask(system, user, tools, { allowTopics, maxSteps = 6, mustPublish = false, limited = false }) {
-  let published = false, reminded = false, measured = null;
+async function runTask(system, user, tools, { allowTopics, maxSteps = 6, mustPublish = false, limited = false, remoteRuns = Object.keys(RUNS), remoteLimited = true, append = '', out = {} }) {
+  let published = false, reminded = false, measured = null, remote = null;
   const messages = [{ role: 'system', content: system }, { role: 'user', content: user }];
   for (let step = 0; step < maxSteps; step++) {
     const msg = await chat(messages, tools); messages.push(msg);
@@ -129,12 +150,22 @@ async function runTask(system, user, tools, { allowTopics, maxSteps = 6, mustPub
         messages.push({ role: 'tool', tool_name: name, content: String(result) });
         continue;
       }
+      if (name === 'run_alert_bot_test' && tools.includes(REMOTE_TOOL)) {
+        const plan = planRemote(args, remoteRuns);
+        if (plan.error) result = 'REFUSED by host: ' + plan.error;
+        else if (remote) result = 'REFUSED by host: one remote test per task';
+        else if (remoteLimited && remoteLimiter.refusal()) result = 'REFUSED by host: remote test ' + remoteLimiter.refusal();
+        else { if (remoteLimited) remoteLimiter.record(); try { remote = await startRemote(plan); out.remote = remote; result = remoteResultLine(remote); log({ remote }); } catch (e) { result = 'ERROR: ' + e.message; } }
+        log({ tool: name, args: JSON.stringify(args).slice(0, 300), result: String(result).slice(0, 1200) });
+        messages.push({ role: 'tool', tool_name: name, content: String(result) });
+        continue;
+      }
       if (!OFFERED.has(name)) result = 'REFUSED by host: tool not offered';
       else if (name === 'axona_publish' && !allowTopics.includes(String(args.topic))) result = 'REFUSED by host: this task may post only to ' + allowTopics.join(', ');
       else if (name === 'axona_publish' && published) result = 'REFUSED by host: one post per task';
       else if (refusal) result = 'REFUSED by host: ' + refusal;
       else {
-        if (name === 'axona_publish') { args = { topic: String(args.topic), message: String(args.message ?? '').slice(0, 2000) + (measured ? '\n\n' + resultLine(measured) : ''), confirm: true, handle: NAME }; }
+        if (name === 'axona_publish') { args = { topic: String(args.topic), message: String(args.message ?? '').slice(0, 2000) + (measured ? '\n\n' + resultLine(measured) : '') + (remote ? '\n\n' + remoteResultLine(remote) : '') + (append ? '\n\n' + append : ''), confirm: true, handle: NAME }; }
         try {
           result = await callTool(name, args);
           if (name === 'axona_publish' && /"ok":\s*true/.test(String(result))) { published = true; if (limited) limiter.record(); }
@@ -153,7 +184,7 @@ const system = () => `${SYSTEM}${FACTS ? `\n\nFACTS ABOUT YOURSELF, measured by 
 const SYSTEM = `You are ${NAME}, a small open-weight language model (${MODEL}) running on one consumer graphics card. You are a peer on the Axona network through local tools. You are new and on trial. Be brief, plain and accurate. Say "I do not know" when you do not know. Never invent facts, figures, file names or commit ids. Never claim to have read, checked or done something a tool result does not show. To post, call the axona_publish tool; text you write without a tool call is seen by nobody.`;
 
 async function main() {
-  const init = await rpc('initialize', { protocolVersion: '2024-11-05', capabilities: {}, clientInfo: { name: 'axona-model-host', version: '0.3.0' } });
+  const init = await rpc('initialize', { protocolVersion: '2024-11-05', capabilities: {}, clientInfo: { name: 'axona-model-host', version: VERSION } });
   srv.stdin.write(JSON.stringify({ jsonrpc: '2.0', method: 'notifications/initialized' }) + '\n');
   log({ start: { mode: MODE, name: NAME, model: MODEL, server: init.result?.serverInfo } });
   const list = await rpc('tools/list', {});
@@ -172,8 +203,8 @@ async function main() {
       `architecture: ${mi['general.architecture'] ?? 'not reported'}; layers: ${mi[`${mi['general.architecture']}.block_count`] ?? 'not reported'}; trained context length: ${mi[`${mi['general.architecture']}.context_length`] ?? 'not reported'} tokens; context in use here: 16384 tokens`,
       `licence (first line of the licence text shipped with the weights): ${lic.slice(0, 80)}`,
       `runtime: Ollama ${ver.version ?? '?'}, on this one machine; no hosted model is called`,
-      `host program: axona-model-host 0.3.0; network access: Axona MCP server ${init.result?.serverInfo?.version ?? '?'}`,
-      `tools you have: ${tools.map((t) => t.function.name).join(', ')}, run_delivery_test (the host runs and times it)`,
+      `host program: axona-model-host ${VERSION}; network access: Axona MCP server ${init.result?.serverInfo?.version ?? '?'}`,
+      `tools you have: ${tools.map((t) => t.function.name).join(', ')}, run_delivery_test (the host runs and times it)${RUNNER ? ', run_alert_bot_test (a runner on the test machine runs and measures it)' : ''}`,
       `limits set by the host: you answer when addressed; one post per answer; 4 posts an hour, 5 minutes apart; you cannot read files, run code or see the project's source`,
       `you keep no memory between answers except the few earlier posts the host shows you`,
     ].join('\n');
@@ -203,9 +234,37 @@ async function main() {
   }
 
   log({ watch: (await callTool('axona_watch', { topic: TOPIC })).slice(0, 200) });
-  const publishOnly = [...tools.filter((t) => t.function.name === 'axona_publish'), MEASURE_TOOL];
+  const publishTool = tools.filter((t) => t.function.name === 'axona_publish');
+  const publishOnly = [...publishTool, MEASURE_TOOL, ...(RUNNER ? [REMOTE_TOOL] : [])];
+  if (RUNNER) log({ watchRemote: (await callTool('axona_watch', { topic: REMOTE_TOPIC })).slice(0, 200), runner: RUNNER.slice(0, 12), night: NIGHT || 'off' });
+  // A post the HOST writes when the model did not: said so in its first words.
+  const hostPost = async (topic, text) => { try { const r = await callTool('axona_publish', { topic, message: text.slice(0, 6000), confirm: true, handle: NAME }); log({ hostPost: topic, ok: /"ok":\s*true/.test(r) }); } catch (e) { log({ hostPostError: e.message }); } };
+  const nightOuts = []; let lastNight = 0, wasNight = false;
   const recent = [];
   while (!existsSync(STOP)) {
+    // NIGHT: inside the window the host starts one test every HOST_NIGHT_GAP_MS. The model is asked to start it and
+    // to word the post; if it does not call the tool, the host starts the test and says so.
+    const night = inWindow(NIGHT);
+    if (night && Date.now() - lastNight >= NIGHT_GAP) {
+      lastNight = Date.now(); const o = {};
+      try {
+        const posted = await runTask(`${system()}\n\nThe night test window is open. Call run_alert_bot_test with run "${NIGHT_RUN}" now. When it returns, publish ONE post of at most 40 words to "${NIGHT_TOPIC}" that starts with "${NAME} night run:" and says which run you started. Write no figures; the host adds them.`,
+          'Start one alert-bot test now.', [...publishTool, REMOTE_TOOL], { allowTopics: [NIGHT_TOPIC], maxSteps: 4, mustPublish: true, remoteRuns: [NIGHT_RUN], remoteLimited: false, out: o });
+        if (!o.remote) { o.remote = await startRemote({ run: NIGHT_RUN }); log({ remote: o.remote, by: 'host' }); await hostPost(NIGHT_TOPIC, `[posted by the host program; the model did not start this run]\n\n${remoteResultLine(o.remote)}`); }
+        else if (!posted) await hostPost(NIGHT_TOPIC, `[posted by the host program; the model started this run and did not post]\n\n${remoteResultLine(o.remote)}`);
+        nightOuts.push(o.remote);
+      } catch (e) { log({ nightError: e.message }); }
+    }
+    if (wasNight && !night && nightOuts.length) {
+      const line = nightSummaryLine(nightOuts); log({ nightSummary: line });
+      try {
+        const posted = await runTask(`${system()}\n\nThe night test window has closed. Publish ONE post of at most 50 words to "${TOPIC}" that starts with "${NAME} → Council:" and says the night stress tests have finished. Write no figures; the host adds the counts.`,
+          'Report that the night tests have finished.', publishTool, { allowTopics: [TOPIC], maxSteps: 3, mustPublish: true, append: line });
+        if (!posted) await hostPost(TOPIC, `${NAME} → Council: [posted by the host program; the model did not post]\n\n${line}`);
+      } catch (e) { log({ nightSummaryError: e.message }); }
+      nightOuts.length = 0;
+    }
+    wasNight = night;
     let rows = [];
     try { rows = JSON.parse(await callTool('axona_poll', { topic: TOPIC, wait: true, timeoutSec: 25 })).messages || []; }
     catch (e) { log({ pollError: e.message }); await sleep(5000); continue; }
@@ -216,7 +275,7 @@ async function main() {
       log({ addressed: { handle: row.handle, signer: row.signer.slice(0, 8), text: row.text.slice(0, 300) } });
       const context = recent.slice(0, -1).map((r) => `[${r.handle} ${r.signer.slice(0, 8)}] ${r.text.slice(0, 500)}`).join('\n---\n');
       try {
-        await runTask(`${system()}\n\nYou are on the topic "${TOPIC}". A post addressed to you is below. Reply with ONE post to "${TOPIC}" of at most 250 words, starting with "${NAME} → " and the name of whoever addressed you. Answer only what was asked. If you are asked to test delivery, latency or loss, call run_delivery_test FIRST and then publish; never write measured figures yourself. If you were shown only part of something, say so. If you cannot answer, say so.`,
+        await runTask(`${system()}\n\nYou are on the topic "${TOPIC}". A post addressed to you is below. Reply with ONE post to "${TOPIC}" of at most 250 words, starting with "${NAME} → " and the name of whoever addressed you. Answer only what was asked. If you are asked to test delivery, latency or loss, call run_delivery_test FIRST and then publish; never write measured figures yourself.${RUNNER ? ' If you are asked to run the alert-bot test or to stress test the network, call run_alert_bot_test FIRST and then publish.' : ''} If you were shown only part of something, say so. If you cannot answer, say so.`,
           `Earlier posts for context (cut short):\n${context || '(none)'}\n\n=== The post addressed to you, from ${row.handle} (${row.signer.slice(0, 8)}) ===\n${row.text.slice(0, 4000)}`,
           publishOnly, { allowTopics: [TOPIC], maxSteps: 4, mustPublish: true, limited: true });
       } catch (e) { log({ taskError: e.message }); }

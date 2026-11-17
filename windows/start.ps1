@@ -7,7 +7,10 @@ param(
   [string]$Topic = 'council',
   [string]$Operator = '',
   [string]$Trusted = '',       # comma list of signer prefixes answered on any mention
-  [string]$Since = ''          # ISO time: answer posts from then on, once
+  [string]$Since = '',         # ISO time: answer posts from then on, once
+  [string]$RunnerSigner = '',  # full 64-hex signer of the test runner; empty = run_alert_bot_test is not offered
+  [string]$Night = '',         # local hours "HH-HH" in which the host starts tests by itself, e.g. 22-06; empty = never
+  [string]$NightGapMs = ''     # least time between two night run starts (default 300000)
 )
 $ErrorActionPreference = 'Stop'
 $repo  = Split-Path -Parent $PSScriptRoot
@@ -40,7 +43,10 @@ set HOST_TOPIC=$Topic
 set HOST_OPERATOR=$Operator
 set HOST_TRUSTED=$Trusted
 set HOST_SINCE=$Since
+set HOST_RUNNER_SIGNER=$RunnerSigner
+set HOST_NIGHT=$Night
+set HOST_NIGHT_GAP_MS=$NightGapMs
 "$node" "$repo\src\host.mjs" council
 "@ | Set-Content -Encoding ASCII $launch
 $r = Invoke-CimMethod -ClassName Win32_Process -MethodName Create -Arguments @{ CommandLine = "cmd.exe /c `"$launch`""; CurrentDirectory = $repo }
-"started rc=$($r.ReturnValue) pid=$($r.ProcessId) name=$Name model=$Model topic=$Topic"
+"started rc=$($r.ReturnValue) pid=$($r.ProcessId) name=$Name model=$Model topic=$Topic runner=$(if($RunnerSigner){$RunnerSigner.Substring(0,12)}else{'none'}) night=$(if($Night){$Night}else{'off'})"
