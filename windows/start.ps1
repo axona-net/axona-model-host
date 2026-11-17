@@ -10,7 +10,8 @@ param(
   [string]$Since = '',         # ISO time: answer posts from then on, once
   [string]$RunnerSigner = '',  # full 64-hex signer of the test runner; empty = run_alert_bot_test is not offered
   [string]$Night = '',         # local hours "HH-HH" in which the host starts tests by itself, e.g. 22-06; empty = never
-  [string]$NightGapMs = ''     # least time between two night run starts (default 300000)
+  [string]$NightGapMs = '',    # least time between two night run starts (default 300000)
+  [string]$Extra = ''          # comma list of NAME=VALUE passed to the host and its MCP server, e.g. PUB_HINT_LIVE=1
 )
 $ErrorActionPreference = 'Stop'
 $repo  = Split-Path -Parent $PSScriptRoot
@@ -33,6 +34,8 @@ Remove-Item (Join-Path $dir "$slug.stop") -ErrorAction SilentlyContinue
 
 # The settings travel in a small launcher so the detached process needs no inherited environment.
 $launch = Join-Path $dir "$slug-launch.cmd"
+# Only plain NAME=VALUE pairs reach the launcher: upper-case name, a value of letters, digits, dot, comma, dash, equals.
+$extraLines = ($Extra -split ',' | ForEach-Object { $_.Trim() } | Where-Object { $_ -match '^[A-Z][A-Z0-9_]{1,40}=[A-Za-z0-9.=-]{1,80}$' } | ForEach-Object { "set $_" }) -join "`r`n"
 New-Item -ItemType Directory -Force $dir | Out-Null
 @"
 @echo off
@@ -46,6 +49,7 @@ set HOST_SINCE=$Since
 set HOST_RUNNER_SIGNER=$RunnerSigner
 set HOST_NIGHT=$Night
 set HOST_NIGHT_GAP_MS=$NightGapMs
+$extraLines
 "$node" "$repo\src\host.mjs" council
 "@ | Set-Content -Encoding ASCII $launch
 $r = Invoke-CimMethod -ClassName Win32_Process -MethodName Create -Arguments @{ CommandLine = "cmd.exe /c `"$launch`""; CurrentDirectory = $repo }
