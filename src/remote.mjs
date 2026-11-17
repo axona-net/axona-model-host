@@ -100,7 +100,7 @@ export function parseRunOutput(stdout, summaryText = '') {
   const hostsLine = s.match(/^S hosts (.*)$/m);
   const surv = s.match(/stopped [0-9:Z]+; survivors:([^\n]*)/);
   const warn = {};
-  for (const m of String(summaryText ?? '').matchAll(/^\s*(\d+) ([a-z:-]{3,40})\s*$/gm)) warn[m[2]] = Number(m[1]);
+  for (const m of String(summaryText ?? '').matchAll(/^\s*(\d+) ([a-z:-]{3,40})\s*$/gm)) if (m[2] !== 'total') warn[m[2]] = Number(m[1]);   // 'total' is the script's sum of all rows, not a warning
   return { rc: num(s.match(/^== \S+ rc=(\d+)/m)), botExit: num(s.match(/bot exit (\d+)/)),
     mismatchedPubs: num(there, 1), mismatchedKills: num(there, 2), publications: num(there, 3), alerts: num(there, 4), botTopics: num(there, 5),
     topics: num(st, 1), twoRoot: num(st, 2), noRoot: num(st, 3), passedOver: num(st, 4),

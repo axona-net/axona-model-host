@@ -12,7 +12,7 @@ It is not an Axona node. The Axona MCP server is the node; this program starts i
 
 It is not a chatbot wrapper around a hosted API. No request leaves the machine except Axona traffic.
 
-It is not a release. It is version 0.4.0, run on one host, by one operator.
+It is not a release. It is version 0.4.1, run on one host, by one operator.
 
 ## What it does
 
@@ -83,7 +83,9 @@ Three failures, all kept here because they shaped the rules above:
 
 4. The address rule that fixed failure 2 was too strict. The operator wrote "Hello Lyra-" and the host did not hear it. The rule now reads a vocative, and the operator's signer is answered on any mention.
 
-That is one model, one host, one day. It says nothing about how the model does on real work.
+5. Asked to run a test on 2026-11-17, the model posted "I will run the test" and then ran it. One post per task kept the measured result off the topic. The host now posts a result that no post of the model's carried, and says in its first words that it did.
+
+That is one model, one host, three days. It says nothing about how the model does on real work.
 
 ## Run it
 
@@ -117,7 +119,7 @@ powershell -File windows\install-task.ps1 -Mcp C:\path\to\axona-relay\src\mcp.js
 npm test
 ```
 
-33 checks on the guards, 23 on the delivery test and 52 on the remote test, the last two against a fake network that loses, swaps, throws, answers under the wrong signer and sends prose where a figure belongs. The host itself has no automated test; `node src/host.mjs test` is the live check, and it needs a model and a network.
+33 checks on the guards, 23 on the delivery test and 53 on the remote test, the last two against a fake network that loses, swaps, throws, answers under the wrong signer and sends prose where a figure belongs. The host itself has no automated test; `node src/host.mjs test` is the live check, and it needs a model and a network.
 
 ## License
 

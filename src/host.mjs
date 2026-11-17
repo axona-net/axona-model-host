@@ -51,7 +51,7 @@ const OFFERED = new Set(['axona_publish', 'axona_pull', 'axona_status', 'axona_p
 const TRUSTED = String(process.env.HOST_TRUSTED || '').split(',').map((x) => x.trim()).filter(Boolean);
 const SINCE = Date.parse(process.env.HOST_SINCE || '');
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-const VERSION = '0.4.0';
+const VERSION = '0.4.1';
 const RUNNER = /^[0-9a-f]{64}$/.test(String(process.env.HOST_RUNNER_SIGNER || '').toLowerCase()) ? String(process.env.HOST_RUNNER_SIGNER).toLowerCase() : null;
 const REMOTE_TOPIC = process.env.HOST_REMOTE_TOPIC || `${SLUG}/alert-bot`;
 const NIGHT = RUNNER ? (process.env.HOST_NIGHT || '') : '';
@@ -117,10 +117,23 @@ const REMOTE_TOOL = { type: 'function', function: { name: 'run_alert_bot_test',
   parameters: { type: 'object', properties: { run: { type: 'string', enum: Object.keys(RUNS), description: 'Which run. Use "production" unless you were asked for another.' } }, required: ['run'] } } };
 const startRemote = (plan) => runRemoteTest(callTool, plan, { topic: REMOTE_TOPIC, runnerSigner: RUNNER });
 
+// A post the HOST writes itself. Its first words always say so.
+const hostPublish = async (topic, text) => { try { const r = await callTool('axona_publish', { topic, message: String(text).slice(0, 6000), confirm: true, handle: NAME }); log({ hostPost: topic, ok: /"ok":\s*true/.test(r) }); return /"ok":\s*true/.test(r); } catch (e) { log({ hostPostError: e.message }); return false; } };
+
 // One task: the model works with the tools until it stops calling them.
 // The host refuses any tool it did not offer and any topic the task does not allow.
 async function runTask(system, user, tools, { allowTopics, maxSteps = 6, mustPublish = false, limited = false, remoteRuns = Object.keys(RUNS), remoteLimited = true, append = '', out = {} }) {
-  let published = false, reminded = false, measured = null, remote = null;
+  let published = false, reminded = false, measured = null, remote = null, carried = false;
+  // A MEASURED RESULT IS NEVER LOST. On 2026-11-17 the model posted "I will run the test" first, then ran it; one
+  // post per task then kept the result off the topic. If a result exists that no post carried, the host posts it.
+  const finish = async () => {
+    if ((measured || remote) && !carried && allowTopics[0]) {
+      const lines = [measured ? resultLine(measured) : '', remote ? remoteResultLine(remote) : '', append].filter(Boolean).join('\n\n');
+      await hostPublish(allowTopics[0], `[posted by the host program: the result of the test ${NAME} started, which ${NAME}'s own post did not carry]\n\n${lines}`);
+      carried = true;
+    }
+    return published;
+  };
   const messages = [{ role: 'system', content: system }, { role: 'user', content: user }];
   for (let step = 0; step < maxSteps; step++) {
     const msg = await chat(messages, tools); messages.push(msg);
@@ -130,10 +143,11 @@ async function runTask(system, user, tools, { allowTopics, maxSteps = 6, mustPub
       // A small model sometimes writes its answer as text and calls nothing. One reminder, no more.
       if (mustPublish && !published && !reminded) {
         reminded = true; log({ reminder: 'no tool call' });
-        messages.push({ role: 'user', content: `You wrote text but did not call a tool, so nobody saw it. Call the axona_publish tool now with topic "${allowTopics[0]}", your reply as the message, and confirm true.` });
+        const testFirst = (tools.includes(REMOTE_TOOL) || tools.includes(MEASURE_TOOL)) && !measured && !remote;
+        messages.push({ role: 'user', content: `You wrote text but did not call a tool, so nobody saw it and nothing ran. ${testFirst ? 'If you were asked to run a test, call that test tool NOW and wait for its result before you publish anything. Otherwise call' : 'Call'} the axona_publish tool with topic "${allowTopics[0]}", your reply as the message, and confirm true.` });
         continue;
       }
-      return published;
+      return finish();
     }
     for (const c of calls) {
       const name = c.function?.name; let args = c.function?.arguments || {};
@@ -168,7 +182,7 @@ async function runTask(system, user, tools, { allowTopics, maxSteps = 6, mustPub
         if (name === 'axona_publish') { args = { topic: String(args.topic), message: String(args.message ?? '').slice(0, 2000) + (measured ? '\n\n' + resultLine(measured) : '') + (remote ? '\n\n' + remoteResultLine(remote) : '') + (append ? '\n\n' + append : ''), confirm: true, handle: NAME }; }
         try {
           result = await callTool(name, args);
-          if (name === 'axona_publish' && /"ok":\s*true/.test(String(result))) { published = true; if (limited) limiter.record(); }
+          if (name === 'axona_publish' && /"ok":\s*true/.test(String(result))) { published = true; if (measured || remote) carried = true; if (limited) limiter.record(); }
         } catch (e) { result = 'ERROR: ' + e.message; }
       }
       log({ tool: name, args: JSON.stringify(args).slice(0, 1200), result: String(result).slice(0, 600) });
@@ -176,7 +190,7 @@ async function runTask(system, user, tools, { allowTopics, maxSteps = 6, mustPub
     }
   }
   log({ note: 'step budget spent' });
-  return published;
+  return finish();
 }
 
 let FACTS = '', BRIEF = '';
@@ -237,8 +251,6 @@ async function main() {
   const publishTool = tools.filter((t) => t.function.name === 'axona_publish');
   const publishOnly = [...publishTool, MEASURE_TOOL, ...(RUNNER ? [REMOTE_TOOL] : [])];
   if (RUNNER) log({ watchRemote: (await callTool('axona_watch', { topic: REMOTE_TOPIC })).slice(0, 200), runner: RUNNER.slice(0, 12), night: NIGHT || 'off' });
-  // A post the HOST writes when the model did not: said so in its first words.
-  const hostPost = async (topic, text) => { try { const r = await callTool('axona_publish', { topic, message: text.slice(0, 6000), confirm: true, handle: NAME }); log({ hostPost: topic, ok: /"ok":\s*true/.test(r) }); } catch (e) { log({ hostPostError: e.message }); } };
   const nightOuts = []; let lastNight = 0, wasNight = false;
   const recent = [];
   while (!existsSync(STOP)) {
@@ -248,10 +260,9 @@ async function main() {
     if (night && Date.now() - lastNight >= NIGHT_GAP) {
       lastNight = Date.now(); const o = {};
       try {
-        const posted = await runTask(`${system()}\n\nThe night test window is open. Call run_alert_bot_test with run "${NIGHT_RUN}" now. When it returns, publish ONE post of at most 40 words to "${NIGHT_TOPIC}" that starts with "${NAME} night run:" and says which run you started. Write no figures; the host adds them.`,
+        await runTask(`${system()}\n\nThe night test window is open. Call run_alert_bot_test with run "${NIGHT_RUN}" now. When it returns, publish ONE post of at most 40 words to "${NIGHT_TOPIC}" that starts with "${NAME} night run:" and says which run you started. Write no figures; the host adds them.`,
           'Start one alert-bot test now.', [...publishTool, REMOTE_TOOL], { allowTopics: [NIGHT_TOPIC], maxSteps: 4, mustPublish: true, remoteRuns: [NIGHT_RUN], remoteLimited: false, out: o });
-        if (!o.remote) { o.remote = await startRemote({ run: NIGHT_RUN }); log({ remote: o.remote, by: 'host' }); await hostPost(NIGHT_TOPIC, `[posted by the host program; the model did not start this run]\n\n${remoteResultLine(o.remote)}`); }
-        else if (!posted) await hostPost(NIGHT_TOPIC, `[posted by the host program; the model started this run and did not post]\n\n${remoteResultLine(o.remote)}`);
+        if (!o.remote) { o.remote = await startRemote({ run: NIGHT_RUN }); log({ remote: o.remote, by: 'host' }); await hostPublish(NIGHT_TOPIC, `[posted by the host program; the model did not start this run]\n\n${remoteResultLine(o.remote)}`); }
         nightOuts.push(o.remote);
       } catch (e) { log({ nightError: e.message }); }
     }
@@ -260,7 +271,7 @@ async function main() {
       try {
         const posted = await runTask(`${system()}\n\nThe night test window has closed. Publish ONE post of at most 50 words to "${TOPIC}" that starts with "${NAME} → Council:" and says the night stress tests have finished. Write no figures; the host adds the counts.`,
           'Report that the night tests have finished.', publishTool, { allowTopics: [TOPIC], maxSteps: 3, mustPublish: true, append: line });
-        if (!posted) await hostPost(TOPIC, `${NAME} → Council: [posted by the host program; the model did not post]\n\n${line}`);
+        if (!posted) await hostPublish(TOPIC, `${NAME} → Council: [posted by the host program; the model did not post]\n\n${line}`);
       } catch (e) { log({ nightSummaryError: e.message }); }
       nightOuts.length = 0;
     }

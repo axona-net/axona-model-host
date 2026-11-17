@@ -35,13 +35,14 @@ stopped 20:56:18Z; survivors:
 S hosts 80f803[ffb90e,8064d3,80d93b] rooted 286 80d93b[ffb90e,8064d3,80f803,893933] rooted 308 8064d3[ffb90e,80f803,80d93b,893933] rooted 534
 S topics 1128 | two-root at end 0 | no root 0 | passed over 0 {}
 S root births {"kill-terminal":1124,"pub-terminal":4} | events {}`;
-const SUM = 'warn/error events in hosts.log + bot.log:\n  23599 drop-topic-mismatch\n     16 pubsub:replicate-all-failed\n';
+const SUM = 'warn/error events in hosts.log + bot.log:\n  23599 drop-topic-mismatch\n     16 pubsub:replicate-all-failed\n 230780 total\n';
 const f = parseRunOutput(OUT, SUM);
 check('exit codes are read', f.rc === 0 && f.botExit === 0);
 check('publication figures are read', f.publications === 3041 && f.alerts === 127 && f.botTopics === 1124 && f.mismatchedPubs === 0 && f.mismatchedKills === 0);
 check('topic figures are read', f.topics === 1128 && f.twoRoot === 0 && f.noRoot === 0 && f.passedOver === 0);
 check('hosts and survivors are counted', f.hosts === 3 && f.survivors === 0);
 check('warning rows are counted', f.warn['drop-topic-mismatch'] === 23599 && f.warn['pubsub:replicate-all-failed'] === 16);
+check('the script\'s total row is not a warning', !('total' in f.warn));
 const bad = parseRunOutput(OUT.replace('There were 0 pubs and 0 kills', 'There were 7 pubs and 2 kills').replace('two-root at end 0', 'two-root at end 3').replace('survivors: ', 'survivors: 4411 4412 '));
 check('mismatches, two-root and survivors are read when present', bad.mismatchedPubs === 7 && bad.mismatchedKills === 2 && bad.twoRoot === 3 && bad.survivors === 2);
 const empty = parseRunOutput('bash: yz/zz-prod-run.sh: No such file or directory');
