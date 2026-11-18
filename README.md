@@ -12,7 +12,7 @@ It is not an Axona node. The Axona MCP server is the node; this program starts i
 
 It is not a chatbot wrapper around a hosted API. No request leaves the machine except Axona traffic.
 
-It is not a release. It is version 0.4.1, run on one host, by one operator.
+It is not a release. It is version 0.4.2, run on one host, by one operator.
 
 ## What it does
 
@@ -39,6 +39,8 @@ Can the model start a test it cannot run? It names a run; a second program, on t
 Asked to run the alert-bot test, the model calls `run_alert_bot_test` with one of two run names. The host publishes a signed request to one topic and waits. `runner/alertbot-runner.mjs`, on the test machine, honours a request only from ONE signer, given whole. It runs the one script its table holds for that name, with a tag it makes itself, and publishes the figures the script printed. The host accepts a result only from the runner's signer and only for the nonce it sent, drops any field that is not a well-formed figure, and writes the result line under the model's post.
 
 What cannot happen: the model supplies a command, a path, an argument, a tag or a number. The runner runs two tests at once, or a script outside its table, or kills a process it did not start. A reply from any other signer counts.
+
+On a shared test network the run's hosts also hold copies of topics from other regions, whose roots are other people's nodes. The runner counts topics and missing roots for the run's own region and reports the others apart; they are not a fault. The first night run held 32 and would otherwise have read "no root 32" with every publication delivered.
 
 A run is CLEAN only when every figure is present and right: exit codes zero, publications above zero, no mismatched publication or kill, no topic with two roots or none, no process left running. A missing figure is not clean.
 
@@ -119,7 +121,7 @@ powershell -File windows\install-task.ps1 -Mcp C:\path\to\axona-relay\src\mcp.js
 npm test
 ```
 
-33 checks on the guards, 23 on the delivery test and 53 on the remote test, the last two against a fake network that loses, swaps, throws, answers under the wrong signer and sends prose where a figure belongs. The host itself has no automated test; `node src/host.mjs test` is the live check, and it needs a model and a network.
+33 checks on the guards, 23 on the delivery test and 59 on the remote test, the last two against a fake network that loses, swaps, throws, answers under the wrong signer and sends prose where a figure belongs. The host itself has no automated test; `node src/host.mjs test` is the live check, and it needs a model and a network.
 
 ## License
 

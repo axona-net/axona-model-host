@@ -51,7 +51,7 @@ const OFFERED = new Set(['axona_publish', 'axona_pull', 'axona_status', 'axona_p
 const TRUSTED = String(process.env.HOST_TRUSTED || '').split(',').map((x) => x.trim()).filter(Boolean);
 const SINCE = Date.parse(process.env.HOST_SINCE || '');
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-const VERSION = '0.4.1';
+const VERSION = '0.4.2';
 const RUNNER = /^[0-9a-f]{64}$/.test(String(process.env.HOST_RUNNER_SIGNER || '').toLowerCase()) ? String(process.env.HOST_RUNNER_SIGNER).toLowerCase() : null;
 const REMOTE_TOPIC = process.env.HOST_REMOTE_TOPIC || `${SLUG}/alert-bot`;
 const NIGHT = RUNNER ? (process.env.HOST_NIGHT || '') : '';

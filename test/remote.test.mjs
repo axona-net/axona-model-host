@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { WIRE, RUNS, planRemote, newNonce, requestText, replyText, readWire, rowOf, runRemoteTest, cleanResult, isClean, parseRunOutput, remoteResultLine, inWindow, nightSummaryLine } from '../src/remote.mjs';
+import { regionSplit, WIRE, RUNS, planRemote, newNonce, requestText, replyText, readWire, rowOf, runRemoteTest, cleanResult, isClean, parseRunOutput, remoteResultLine, inWindow, nightSummaryLine } from '../src/remote.mjs';
 let n = 0; const check = (name, ok) => { assert(ok, name); n++; console.log('PASS ' + name); };
 
 // what the model may ask for
@@ -98,6 +98,21 @@ const row = (signer, text) => ({ signer, message: { text }, ts: 1 });
   const N = '3333333333333333'; const h = mk([[row(RUNNER, replyText('result', N, { ...f, mismatchedPubs: 4, tag: 'LY261117205544', timedOut: false }))]]);
   const o = await runRemoteTest(h.callTool, { run: 'production' }, { topic: 't', runnerSigner: RUNNER, now: h.now, nonce: N });
   check('a result with mismatches reads NOT CLEAN', !isClean(o.result) && remoteResultLine(o).includes('NOT CLEAN') && remoteResultLine(o).includes('mismatched 4 publications'));
+}
+
+// topics of the run's region versus copies of other regions' topics
+{
+  const H = (id, roles) => 'x BOT-HEALTH ' + JSON.stringify({ id, health: { nodeId: id + '00'.repeat(30), axonRoles: roles } });
+  const R = (topic, isRoot) => ({ topic: topic + 'ab'.repeat(30), isRoot });
+  const logText = ['noise', H('80aaaa', [R('8001', true), R('8002', false), R('8901', false)]), H('80bbbb', [R('8002', true), R('8003', false), R('8902', false), R('8901', false)]), 'BOT-HEALTH {torn'].join('\n');
+  const sp = regionSplit(logText);
+  check('topics of the run\'s region are counted', sp.topics === 3);
+  check('a topic of the run\'s region with no root among the hosts is counted', sp.noRoot === 1);
+  check('copies of another region\'s topics are counted apart and are not no-root', sp.foreignTopics === 2);
+  check('no host report gives null, not zeros', regionSplit('nothing here') === null && regionSplit(undefined) === null);
+  const withForeign = cleanResult({ ...f, noRoot: 0, foreignTopics: 32, tag: 'LY261118040022', run: 'production', kernel: '4.154.0', seconds: 58, timedOut: false });
+  check('a run whose only oddity is foreign copies is clean', isClean(withForeign));
+  check('the line reports the foreign copies and says they are not counted', remoteResultLine({ status: 'done', run: 'production', result: withForeign, waitedMs: 1 }).includes('Copies of 32 topics from other regions'));
 }
 
 // the night window

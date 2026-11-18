@@ -84,7 +84,7 @@ export function cleanResult(w) {
   return { tag: /^[A-Z0-9]{3,24}$/.test(String(w.tag ?? '')) ? w.tag : null, run: String(w.run ?? '').slice(0, 20), kernel: /^\d+\.\d+\.\d+$/.test(String(w.kernel ?? '')) ? w.kernel : null,
     rc: int(w.rc), botExit: int(w.botExit), publications: int(w.publications), alerts: int(w.alerts), botTopics: int(w.botTopics),
     mismatchedPubs: int(w.mismatchedPubs), mismatchedKills: int(w.mismatchedKills), topics: int(w.topics), twoRoot: int(w.twoRoot), noRoot: int(w.noRoot), passedOver: int(w.passedOver),
-    hosts: int(w.hosts), survivors: int(w.survivors), seconds: int(w.seconds), timedOut: w.timedOut === true, warn };
+    hosts: int(w.hosts), survivors: int(w.survivors), seconds: int(w.seconds), foreignTopics: int(w.foreignTopics), timedOut: w.timedOut === true, warn };
 }
 
 /** Is this result a clean run? Every figure must be present and right; a missing figure is not clean. */
@@ -108,6 +108,27 @@ export function parseRunOutput(stdout, summaryText = '') {
     survivors: surv ? surv[1].trim().split(/\s+/).filter(Boolean).length : null, warn };
 }
 
+/**
+ * Runner side. The hosts' own end-of-run reports → which topics belong to this run's regions.
+ *
+ * The script counts a topic as "no root" when none of the run's hosts roots it. On a shared test network the hosts
+ * also hold COPIES of topics from other regions, whose roots are other people's nodes. On 2026-11-18 the first night
+ * run held 32 such topics and read "no root 32" with every publication delivered. A topic is FOREIGN when its region
+ * byte is not the region byte of any host of the run. Foreign topics are counted and reported, and are not a fault.
+ */
+export function regionSplit(hostsLogText) {
+  const hosts = [];
+  for (const l of String(hostsLogText ?? '').split('\n')) { const i = l.indexOf('BOT-HEALTH '); if (i < 0) continue; try { hosts.push(JSON.parse(l.slice(i + 11))); } catch { /* a torn line */ } }
+  if (!hosts.length) return null;
+  const regions = new Set(hosts.map((h) => String(h?.health?.nodeId ?? '').slice(0, 2).toLowerCase()).filter((x) => /^[0-9a-f]{2}$/.test(x)));
+  if (!regions.size) return null;
+  const rooted = new Set(); const all = new Set();
+  for (const h of hosts) for (const r of (h?.health?.axonRoles || [])) { const t = String(r?.topic ?? '').toLowerCase(); if (!/^[0-9a-f]{4,}$/.test(t)) continue; all.add(t); if (r.isRoot) rooted.add(t); }
+  let topics = 0, noRoot = 0, foreignTopics = 0;
+  for (const t of all) { if (regions.has(t.slice(0, 2))) { topics++; if (!rooted.has(t)) noRoot++; } else foreignTopics++; }
+  return { topics, noRoot, foreignTopics };
+}
+
 /** The line the host writes under the model's words. */
 export function remoteResultLine(o) {
   const head = '[measured by the test runner on the test machine, not written by the model]';
@@ -116,7 +137,8 @@ export function remoteResultLine(o) {
   const w = Object.entries(r.warn).map(([k, v]) => `${k} ${v}`).join(', ');
   return `${head} run "${o.run}", tag ${r.tag ?? 'none'}, kernel ${r.kernel ?? 'not reported'}, on testnet: ${isClean(r) ? 'CLEAN' : 'NOT CLEAN'}. `
     + `Publications ${n(r.publications)} (${n(r.alerts)} alerts in ${n(r.botTopics)} topics); mismatched ${n(r.mismatchedPubs)} publications and ${n(r.mismatchedKills)} kills. `
-    + `Hosts reporting ${n(r.hosts)}; topics they hold ${n(r.topics)}; two roots at the end ${n(r.twoRoot)}; no root ${n(r.noRoot)}; passed over ${n(r.passedOver)}. `
+    + `Hosts reporting ${n(r.hosts)}; topics of this run's region they hold ${n(r.topics)}; two roots at the end ${n(r.twoRoot)}; no root ${n(r.noRoot)}; passed over ${n(r.passedOver)}. `
+    + (r.foreignTopics ? `Copies of ${r.foreignTopics} topics from other regions were also held; their roots are other nodes on the test network and they are not counted. ` : '')
     + `Script exit ${n(r.rc)}, bot exit ${n(r.botExit)}, processes left running ${n(r.survivors)}${r.timedOut ? ', TIMED OUT' : ''}; ${n(r.seconds)} s. `
     + (w ? `Warning rows counted: ${w}. ` : '')
     + 'One run of one small mesh; it shows what this run did and nothing about a larger one.';

@@ -27,7 +27,7 @@ import { appendFileSync, existsSync, mkdirSync, readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { startMcp } from '../src/mcp-client.mjs';
-import { RUNS, readWire, rowOf, replyText, parseRunOutput } from '../src/remote.mjs';
+import { RUNS, readWire, rowOf, replyText, parseRunOutput, regionSplit } from '../src/remote.mjs';
 
 // THE WHOLE LIST of what this runner can execute. Each entry is argv after "bash", relative to RUNNER_WORKDIR.
 const SCRIPTS = { production: 'yz/zz-prod-run.sh', guard: 'yz/zz-g1-run.sh' };
@@ -87,12 +87,15 @@ async function handle(w) {
   const r = await runScript(w.run, tag);
   let summary = ''; try { summary = readFileSync(join(WORK, 'runs', `${tag}-S1R1`, 'summary.txt'), 'utf8'); } catch { /* no summary file */ }
   const figures = parseRunOutput(r.out, summary);
+  // Topics and no-root are counted for the run's own region; copies of other regions' topics are reported apart.
+  let split = null; try { split = regionSplit(readFileSync(join(WORK, 'runs', `${tag}-S1R1`, 'hosts.log'), 'utf8')); } catch { /* no hosts log: keep the script's figures */ }
+  if (split) { figures.scriptNoRoot = figures.noRoot; figures.topics = split.topics; figures.noRoot = split.noRoot; figures.foreignTopics = split.foreignTopics; }
   log({ done: { tag, seconds: r.seconds, timedOut: r.timedOut, figures } });
   await say(replyText('result', w.nonce, { run: w.run, tag, kernel: kernelVersion(), seconds: r.seconds, timedOut: r.timedOut, ...figures }));
 }
 
 async function main() {
-  const server = await mcp.init('alertbot-runner', '0.4.0');
+  const server = await mcp.init('alertbot-runner', '0.4.2');
   let self = '';
   for (let i = 0; i < 20 && !self; i++) { let j = {}; try { j = JSON.parse(await mcp.callTool('axona_status', {})); } catch { /* not ready */ } if (j.connected) self = String(j.authorId || ''); else await sleep(3000); }
   if (!self) throw new Error('the peer did not connect');
